@@ -28,6 +28,8 @@ def analyze_pdf_page(pdf_path, page_num):
     upload_dir = 'uploads'
     output_path = os.path.join(upload_dir, output_filename)
     pix.save(output_path)
+
+    print(text)
     
     # 分析结果
     result = {

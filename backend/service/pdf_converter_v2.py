@@ -255,42 +255,7 @@ class PDFConverterV2:
         
         return '\n'.join(page_content)
     
-    def _extract_tables_with_pdfplumber(self, doc: fitz.Document, page_idx: int) -> str:
-        """使用pdfplumber提取表格"""
-        if not self.config.table_detection_enabled:
-            return ""
-        
-        try:
-            # 将PyMuPDF页面转换为pdfplumber可处理的格式
-            pdf_path = doc.name
-            
-            with pdfplumber.open(pdf_path) as pdf:
-                if page_idx < len(pdf.pages):
-                    page = pdf.pages[page_idx]
-                    tables = page.find_tables()
-                    
-                    if tables:
-                        table_content = []
-                        
-                        for i, table in enumerate(tables):
-                            # 使用更健壮的表格提取方法
-                            extracted_table = self._extract_table_safely(table)
-                            
-                            if (extracted_table and 
-                                len(extracted_table) > 1 and 
-                                self._is_valid_table(extracted_table)):
-                                
-                                markdown_table = self._convert_table_to_markdown(extracted_table)
-                                table_content.append(f"**表格 {i + 1}:**\n\n{markdown_table}\n")
-                                self.processing_stats['tables_found'] += 1
-                        
-                        if table_content:
-                            return '\n'.join(table_content)
-                        
-        except Exception as e:
-            self.logger.warning(f"使用pdfplumber处理第{page_idx + 1}页表格时发生错误: {e}")
-        
-        return ""
+
     
     def _extract_table_safely(self, table) -> List[List[str]]:
         """安全地提取表格数据，处理各种异常情况"""
@@ -392,60 +357,7 @@ class PDFConverterV2:
         
         return cleaned_table
     
-    def _remove_table_areas_from_text(self, doc: fitz.Document, page_idx: int, text_content: str) -> str:
-        """从文本内容中移除表格区域的内容，避免重复"""
-        if not text_content:
-            return text_content
-        
-        try:
-            # 使用pdfplumber检测表格区域
-            with pdfplumber.open(doc.name) as pdf:
-                page_pdfplumber = pdf.pages[page_idx]
-                tables = page_pdfplumber.find_tables()
-                
-                if not tables:
-                    return text_content
-                
-                # 获取表格的边界框
-                table_bboxes = []
-                for table in tables:
-                    bbox = table.bbox
-                    # 扩大边界框以确保完全捕获表格内容
-                    expanded_bbox = (
-                        max(0, bbox[0] - 20),
-                        max(0, bbox[1] - 20),
-                        min(page_pdfplumber.width, bbox[2] + 20),
-                        min(page_pdfplumber.height, bbox[3] + 20)
-                    )
-                    table_bboxes.append(expanded_bbox)
-                
-                # 使用PyMuPDF提取文本块，并过滤掉表格区域的内容
-                page = doc[page_idx]
-                text_blocks = page.get_text("dict")["blocks"]
-                
-                filtered_text = []
-                
-                for block in text_blocks:
-                    if "lines" in block:  # 文本块
-                        # 检查文本块是否在表格区域内
-                        block_bbox = (block["bbox"][0], block["bbox"][1], block["bbox"][2], block["bbox"][3])
-                        
-                        is_in_table_area = False
-                        for table_bbox in table_bboxes:
-                            if self._bbox_overlap(block_bbox, table_bbox):
-                                is_in_table_area = True
-                                break
-                        
-                        if not is_in_table_area:
-                            block_text = self._format_text_block(block)
-                            if block_text.strip():
-                                filtered_text.append(block_text)
-                
-                return '\n'.join(filtered_text)
-                
-        except Exception as e:
-            self.logger.warning(f"表格区域移除失败，使用原始文本: {e}")
-            return text_content
+
     
     def _bbox_overlap(self, bbox1, bbox2) -> bool:
         """检查两个边界框是否重叠"""
@@ -455,81 +367,29 @@ class PDFConverterV2:
         # 检查是否有重叠
         return not (x1_max < x2_min or x1_min > x2_max or y1_max < y2_min or y1_min > y2_max)
     
-    def _bbox_contained(self, bbox1, bbox2) -> bool:
-        """检查bbox1是否完全包含在bbox2内"""
-        x1_min, y1_min, x1_max, y1_max = bbox1
-        x2_min, y2_min, x2_max, y2_max = bbox2
-        
-        return (x1_min >= x2_min and x1_max <= x2_max and 
-                y1_min >= y2_min and y1_max <= y2_max)
-    
     def _bbox_overlap_ratio(self, bbox1, bbox2) -> float:
         """计算两个边界框的重叠比例"""
         x1_min, y1_min, x1_max, y1_max = bbox1
         x2_min, y2_min, x2_max, y2_max = bbox2
         
-        # 计算重叠区域
+        # 计算重叠区域的坐标
         overlap_x_min = max(x1_min, x2_min)
         overlap_y_min = max(y1_min, y2_min)
         overlap_x_max = min(x1_max, x2_max)
         overlap_y_max = min(y1_max, y2_max)
         
-        if overlap_x_max <= overlap_x_min or overlap_y_max <= overlap_y_min:
+        # 检查是否有重叠
+        if overlap_x_max < overlap_x_min or overlap_y_max < overlap_y_min:
             return 0.0
         
-        # 计算重叠面积
+        # 计算重叠区域面积
         overlap_area = (overlap_x_max - overlap_x_min) * (overlap_y_max - overlap_y_min)
+        
+        # 计算第一个边界框的面积
         bbox1_area = (x1_max - x1_min) * (y1_max - y1_min)
         
-        if bbox1_area == 0:
-            return 0.0
-        
-        return overlap_area / bbox1_area
-    
-    def _extract_clean_table_text(self, tables_content: str) -> List[str]:
-        """从表格内容中提取清理后的文本行"""
-        clean_lines = []
-        
-        # 提取表格中的所有文本内容
-        lines = tables_content.split('\n')
-        
-        for line in lines:
-            # 跳过表格格式行和标题行
-            if line.startswith('|') and '---' not in line and '**表格' not in line:
-                # 提取单元格内容
-                cells = [cell.strip() for cell in line.split('|') if cell.strip()]
-                if cells:
-                    # 将单元格内容合并为一行文本
-                    row_text = ' '.join(cells)
-                    # 移除HTML标签和清理文本
-                    clean_text = row_text.replace('<br>', ' ').strip()
-                    # 标准化文本（去除多余空格）
-                    normalized_text = ' '.join(clean_text.split())
-                    if normalized_text:
-                        clean_lines.append(normalized_text)
-        
-        return clean_lines
-    
-    def _is_mostly_table_content(self, line: str, table_text_set: set) -> bool:
-        """检查一行是否主要是表格内容"""
-        if not line:
-            return False
-        
-        # 检查这一行是否与表格内容高度匹配
-        words = line.split()
-        if not words:
-            return False
-        
-        # 计算与表格内容的匹配度
-        match_count = 0
-        for word in words:
-            for table_text in table_text_set:
-                if word in table_text:
-                    match_count += 1
-                    break
-        
-        # 如果超过一半的词汇匹配表格内容，认为是表格行
-        return match_count >= len(words) * 0.5
+        # 返回重叠比例（相对于第一个边界框的面积）
+        return overlap_area / bbox1_area if bbox1_area > 0 else 0.0
     
     def _extract_text_with_table_placeholders(self, doc: fitz.Document, page_idx: int) -> str:
         """使用PyMuPDF提取文本，在表格位置插入占位符"""
@@ -590,21 +450,7 @@ class PDFConverterV2:
             self.logger.warning(f"使用PyMuPDF提取第{page_idx + 1}页文本时发生错误: {e}")
             return f"<!-- 文本提取错误: {e} -->"
     
-    def _extract_single_table(self, table) -> str:
-        """提取单个表格内容"""
-        try:
-            # 安全地提取表格数据
-            extracted_table = self._extract_table_safely(table)
-            
-            if extracted_table and len(extracted_table) > 1 and self._is_valid_table(extracted_table):
-                # 转换为Markdown格式
-                markdown_table = self._convert_table_to_markdown(extracted_table)
-                return markdown_table
-            
-        except Exception as e:
-            self.logger.warning(f"提取单个表格时发生错误: {e}")
-        
-        return ""
+
     
     def _extract_tables_with_positions(self, doc: fitz.Document, page_idx: int) -> Dict[int, str]:
         """提取表格内容并记录位置信息"""
@@ -618,11 +464,14 @@ class PDFConverterV2:
                 
                 for i, table in enumerate(tables):
                     # 提取表格内容
-                    table_content = self._extract_single_table(table)
+                    extracted_table = self._extract_table_safely(table)
                     
-                    if table_content:
-                        # 记录表格位置和内容
-                        tables_dict[i] = table_content
+                    if (extracted_table and 
+                        len(extracted_table) > 1 and 
+                        self._is_valid_table(extracted_table)):
+                        
+                        markdown_table = self._convert_table_to_markdown(extracted_table)
+                        tables_dict[i] = f"**表格:**\n\n{markdown_table}\n"
                         
         except Exception as e:
             self.logger.warning(f"表格提取失败: {e}")
@@ -656,14 +505,8 @@ class PDFConverterV2:
                 
                 for i, table in enumerate(tables):
                     bbox = table.bbox
-                    # 精确的边界框，避免包含表格外的文字
-                    expanded_bbox = (
-                        max(0, bbox[0] - 2),   # 减少横向扩展
-                        max(0, bbox[1] - 2),   # 减少纵向扩展
-                        min(page_pdfplumber.width, bbox[2] + 2),
-                        min(page_pdfplumber.height, bbox[3] + 2)
-                    )
-                    table_positions.append((expanded_bbox, i))
+                    # 使用原始边界框
+                    table_positions.append((bbox, i))
                     
         except Exception as e:
             self.logger.warning(f"表格位置检测失败: {e}")
@@ -673,59 +516,118 @@ class PDFConverterV2:
         
         return table_positions
     
-    def _detect_table_areas(self, doc: fitz.Document, page_idx: int) -> List[Tuple[float, float, float, float]]:
-        """检测页面中的表格区域"""
-        table_bboxes = []
-        
-        try:
-            # 使用pdfplumber检测表格
-            with pdfplumber.open(doc.name) as pdf:
-                page_pdfplumber = pdf.pages[page_idx]
-                tables = page_pdfplumber.find_tables()
-                
-                for table in tables:
-                    bbox = table.bbox
-                    # 扩大边界框以确保完全捕获表格内容
-                    expanded_bbox = (
-                        max(0, bbox[0] - 30),
-                        max(0, bbox[1] - 30),
-                        min(page_pdfplumber.width, bbox[2] + 30),
-                        min(page_pdfplumber.height, bbox[3] + 30)
-                    )
-                    table_bboxes.append(expanded_bbox)
-                    
-        except Exception as e:
-            self.logger.warning(f"表格区域检测失败: {e}")
-        
-        return table_bboxes
-    
     def _format_text_block(self, block: Dict) -> str:
-        """格式化文本块"""
+        """格式化文本块，保留空格和换行结构"""
         if not self.config.preserve_formatting:
             # 简单提取文本
             return block.get("text", "").strip()
         
-        # 收集整个文本块的所有span内容
-        all_spans = []
+        formatted_lines = []
+        
+        # 按Y轴坐标分组，合并同一行的文本
+        lines_by_y = {}
         
         for line in block["lines"]:
-            for span in line["spans"]:
-                text = span["text"].strip()
-                if text:
-                    # 简单的格式判断（可根据字体大小、粗细等扩展）
-                    font_size = span.get("size", 0)
-                    
-                    if font_size > 14:  # 可能是标题
-                        all_spans.append(f"**{text}**")
-                    else:
-                        all_spans.append(text)
+            if not line.get("spans"):
+                continue
+                
+            # 获取行的Y轴坐标（使用第一个span的bbox）
+            if line["spans"] and "bbox" in line["spans"][0]:
+                y_coord = line["spans"][0]["bbox"][1]  # 使用Y1坐标
+                
+                # 四舍五入到最近的整数，处理微小差异
+                y_key = round(y_coord)
+                
+                if y_key not in lines_by_y:
+                    lines_by_y[y_key] = []
+                
+                lines_by_y[y_key].extend(line["spans"])
         
-        if not all_spans:
+        # 按Y坐标排序（从大到小，PDF坐标系Y轴向上递增）
+        sorted_y_keys = sorted(lines_by_y.keys(), reverse=True)
+        
+        for y_key in sorted_y_keys:
+            spans = lines_by_y[y_key]
+            line_spans = []
+            
+            # 按X坐标排序（从左到右）
+            sorted_spans = sorted(spans, key=lambda s: s.get("bbox", [0, 0, 0, 0])[0] if "bbox" in s else 0)
+            
+            for span in sorted_spans:
+                text = span["text"]
+                # 保留原始空格，但清理多余空格
+                if text and text.strip():
+                    # 清理多余空格（保留单词间单个空格）
+                    cleaned_text = ' '.join(text.split())
+                    
+                    # 更智能的格式判断
+                    font_size = span.get("size", 0)
+                    font_flags = span.get("flags", 0)
+                    
+                    # 判断是否为标题（字体大小较大或加粗）
+                    is_bold = font_flags & 2  # 检查是否为加粗
+                    is_title = font_size > 14 or is_bold
+                    
+                    if is_title:
+                        line_spans.append(f"**{cleaned_text}**")
+                    else:
+                        line_spans.append(cleaned_text)
+            
+            if line_spans:
+                # 将同一行的span用空格连接，保留原始空格结构
+                line_content = " ".join(line_spans)
+                formatted_lines.append(line_content)
+        
+        if not formatted_lines:
             return ""
         
-        # 将整个文本块的所有span用空格连接，形成一个连续的段落
-        return " ".join(all_spans)
+        # 将不同行用换行符连接，保留换行结构
+        block_content = '\n'.join(formatted_lines)
+        
+        # 如果有bbox信息，检查是否为段落分隔
+        if "bbox" in block:
+            block_height = block["bbox"][3] - block["bbox"][1]
+            # 如果是较大的文本块，可能是一个段落，添加空行分隔
+            if block_height > 20:  # 假设高度大于20像素可能是段落分隔
+                return f"\n{block_content}\n"
+        
+        return block_content
     
+    def _merge_text_blocks(self, text_blocks: List[str]) -> str:
+        """智能合并文本块，处理段落结构"""
+        if not text_blocks:
+            return ""
+        
+        merged_content = []
+        
+        for i, block in enumerate(text_blocks):
+            block = block.strip()
+            if not block:
+                continue
+                
+            # 如果当前块以换行符开头，可能是段落分隔
+            if block.startswith('\n') and merged_content:
+                # 确保前一个块有换行符结尾
+                if not merged_content[-1].endswith('\n'):
+                    merged_content[-1] += '\n'
+                
+            merged_content.append(block)
+            
+            # 如果不是最后一个块，检查是否需要添加分隔
+            if i < len(text_blocks) - 1:
+                next_block = text_blocks[i + 1].strip()
+                if next_block and not next_block.startswith('\n'):
+                    # 如果下一个块不是段落开始，添加空格分隔
+                    merged_content.append(" ")
+        
+        # 合并所有内容
+        result = ''.join(merged_content)
+        
+        # 清理多余的空格和换行符
+        result = '\n'.join(line.strip() for line in result.splitlines() if line.strip())
+        
+        return result
+
     def _save_output(self, content: str, output_path: str):
         """保存输出文件"""
         try:
@@ -790,13 +692,13 @@ def main():
         description='PDF转Markdown转换器 V2',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-使用示例:
-  python pdf_converter_v2.py input.pdf
-  python pdf_converter_v2.py input.pdf -o output.md
-  python pdf_converter_v2.py input.pdf -s 1 -e 10 -o output.md
-  python pdf_converter_v2.py input.pdf --chunk-size 25 --progress-interval 5
-        """
-    )
+            使用示例:
+            python pdf_converter_v2.py input.pdf
+            python pdf_converter_v2.py input.pdf -o output.md
+            python pdf_converter_v2.py input.pdf -s 1 -e 10 -o output.md
+            python pdf_converter_v2.py input.pdf --chunk-size 25 --progress-interval 5
+                    """
+                )
     
     # 必需参数
     parser.add_argument('pdf_path', help='输入PDF文件路径')

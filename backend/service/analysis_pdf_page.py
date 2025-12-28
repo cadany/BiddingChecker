@@ -25,7 +25,7 @@ def analyze_pdf_page(pdf_path="投标文件样本.pdf", page_num=4):
     filename = pdf_path.split('/')[-1].replace('.pdf', '')
     pix.save(f"{filename}_page_{page_num}_rendered.png")
     print("已保存页面渲染图，可以查看是否为图片")
-    
+
     return {
         "has_images": len(images) > 0,
         "has_text": bool(text.strip()),
