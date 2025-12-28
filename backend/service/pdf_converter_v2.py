@@ -705,11 +705,10 @@ class PDFConverterV2:
             # 简单提取文本
             return block.get("text", "").strip()
         
-        block_text = []
+        # 收集整个文本块的所有span内容
+        all_spans = []
         
         for line in block["lines"]:
-            line_text = []
-            
             for span in line["spans"]:
                 text = span["text"].strip()
                 if text:
@@ -717,17 +716,15 @@ class PDFConverterV2:
                     font_size = span.get("size", 0)
                     
                     if font_size > 14:  # 可能是标题
-                        line_text.append(f"**{text}**")
+                        all_spans.append(f"**{text}**")
                     else:
-                        line_text.append(text)
-            
-            if line_text:
-                # 将同一行的span用空格连接
-                line_content = " ".join(line_text)
-                block_text.append(line_content)
+                        all_spans.append(text)
         
-        # 将整个文本块的内容用换行符连接
-        return '\n'.join(block_text)
+        if not all_spans:
+            return ""
+        
+        # 将整个文本块的所有span用空格连接，形成一个连续的段落
+        return " ".join(all_spans)
     
     def _save_output(self, content: str, output_path: str):
         """保存输出文件"""
