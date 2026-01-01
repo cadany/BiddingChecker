@@ -20,7 +20,6 @@ class ConversionConfig:
     """转换配置"""
     # 表格处理配置
     table_detection_enabled: bool = True
-    table_extraction_method: str = "pdfplumber"  # "pdfplumber" 或 "pymupdf"
     table_min_columns: int = 2
     
     # 文本处理配置
@@ -28,11 +27,8 @@ class ConversionConfig:
     extract_images: bool = False  # 暂时不处理图片
     
     # 性能配置
-    chunk_size: int = 50  # 每批处理的页面数
+    chunk_size: int = 10  # 每批处理的页面数
     progress_update_interval: int = 10  # 进度更新间隔（页面数）
-    
-    # 输出配置
-    output_format: str = "markdown"  # "markdown" 或 "text"
     
 
 class PDFConverterV2:
@@ -357,8 +353,6 @@ class PDFConverterV2:
         
         return cleaned_table
     
-
-    
     def _bbox_overlap(self, bbox1, bbox2) -> bool:
         """检查两个边界框是否重叠"""
         x1_min, y1_min, x1_max, y1_max = bbox1
@@ -449,8 +443,6 @@ class PDFConverterV2:
         except Exception as e:
             self.logger.warning(f"使用PyMuPDF提取第{page_idx + 1}页文本时发生错误: {e}")
             return f"<!-- 文本提取错误: {e} -->"
-    
-
     
     def _extract_tables_with_positions(self, doc: fitz.Document, page_idx: int) -> Dict[int, str]:
         """提取表格内容并记录位置信息"""
@@ -642,21 +634,6 @@ class PDFConverterV2:
             
         except Exception as e:
             raise Exception(f"保存输出文件失败: {e}")
-    
-    def get_processing_stats(self) -> Dict[str, Any]:
-        """获取处理统计信息"""
-        return self.processing_stats.copy()
-    
-    def reset_stats(self):
-        """重置统计信息"""
-        self.processing_stats = {
-            'total_pages': 0,
-            'processed_pages': 0,
-            'tables_found': 0,
-            'errors': [],
-            'start_time': None,
-            'end_time': None
-        }
 
 
 def convert_pdf_file(
