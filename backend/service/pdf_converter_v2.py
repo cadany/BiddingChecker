@@ -3,17 +3,17 @@ PDF转Markdown转换器 V2
 基于PyMuPDF和pdfplumber，专门处理大文件和高稳定性需求
 """
 
-import fitz  # PyMuPDF
+import fitz
 import pdfplumber
 import os
 import logging
-import re
 import time
 from typing import Optional, Dict, List, Tuple, Any
 from dataclasses import dataclass
 from pathlib import Path
-import json
-
+from PIL import Image
+import io
+from ocr_service import OCRService
 
 @dataclass
 class ConversionConfig:
@@ -48,6 +48,7 @@ class PDFConverterV2:
             'start_time': None,
             'end_time': None
         }
+        self.ocr_service = OCRService()
     
     def _setup_logger(self) -> logging.Logger:
         """设置详细的日志系统"""
@@ -232,21 +233,20 @@ class PDFConverterV2:
         return '\n'.join(batch_content)
     
     def _process_single_page(self, doc: fitz.Document, page_idx: int) -> str:
-        """处理单个页面，保留表格的原始位置"""
+        """处理单个页面，保留表格和图片的原始位置"""
         page_num = page_idx + 1
         
         # 添加页面标题
         page_content = [f"\n## 第 {page_num} 页\n"]
         
-        # 第一步：使用PyMuPDF提取文本，在表格位置插入占位符
+        # 提取文本并插入占位符
         text_with_placeholders = self._extract_text_with_table_placeholders(doc, page_idx)
         
-        # 第二步：使用pdfplumber提取表格内容
+        # 提取表格和图片内容
         tables_dict = self._extract_tables_with_positions(doc, page_idx)
         images_dict = self._extract_images_with_positions(doc, page_idx)
-        print(f"第 {page_num} 页 提取到的图片占位符: {images_dict}")
         
-        # 第三步：用实际的表格内容替换占位符
+        # 替换占位符
         final_content = self._replace_placeholders_with_tables(text_with_placeholders, tables_dict)
         final_content = self._replace_placeholders_with_images(final_content, images_dict)
         
@@ -257,23 +257,10 @@ class PDFConverterV2:
 
     
     def _extract_table_safely(self, table) -> List[List[str]]:
-        """安全地提取表格数据，处理各种异常情况"""
+        """安全地提取表格数据"""
         try:
             extracted_table = table.extract()
-            
-            # 确保所有单元格都是字符串
-            cleaned_table = []
-            for row in extracted_table:
-                cleaned_row = []
-                for cell in row:
-                    if cell is None:
-                        cleaned_row.append("")
-                    else:
-                        cleaned_row.append(str(cell).strip())
-                cleaned_table.append(cleaned_row)
-            
-            return cleaned_table
-            
+            return [[str(cell).strip() if cell else "" for cell in row] for row in extracted_table]
         except Exception as e:
             self.logger.warning(f"提取表格数据时发生错误: {e}")
             return []
@@ -283,85 +270,41 @@ class PDFConverterV2:
         if not table_data or len(table_data) < 2:
             return False
         
-        # 检查是否有足够的列
         max_columns = max(len(row) for row in table_data)
-        if max_columns < self.config.table_min_columns:
-            return False
+        has_content = any(cell.strip() for row in table_data for cell in row)
         
-        # 检查表格是否有实际内容（不只是空行）
-        has_content = False
-        for row in table_data:
-            for cell in row:
-                if cell and cell.strip():
-                    has_content = True
-                    break
-            if has_content:
-                break
-        
-        return has_content
+        return max_columns >= self.config.table_min_columns and has_content
     
     def _convert_table_to_markdown(self, table_data: List[List[str]]) -> str:
         """将表格数据转换为Markdown格式"""
         if not table_data or len(table_data) < 2:
             return ""
         
-        markdown_lines = []
-        
-        # 清理和预处理表格数据
         cleaned_table = self._clean_table_data(table_data)
-        
-        # 表头
         headers = cleaned_table[0]
-        markdown_lines.append("| " + " | ".join(headers) + " |")
         
-        # 分隔线
-        separator = "| " + " | ".join(["---"] * len(headers)) + " |"
-        markdown_lines.append(separator)
+        markdown_lines = [
+            f"| {' | '.join(headers)} |",
+            f"| {' | '.join(['---'] * len(headers))} |"
+        ]
         
-        # 数据行
         for row in cleaned_table[1:]:
-            if len(row) == len(headers):
-                markdown_lines.append("| " + " | ".join(row) + " |")
-            else:
-                # 处理列数不匹配的情况
-                adjusted_row = row + [""] * (len(headers) - len(row))
-                markdown_lines.append("| " + " | ".join(adjusted_row[:len(headers)]) + " |")
+            adjusted_row = row + [""] * (len(headers) - len(row))
+            markdown_lines.append(f"| {' | '.join(adjusted_row[:len(headers)])} |")
         
         return '\n'.join(markdown_lines)
     
     def _clean_table_data(self, table_data: List[List[str]]) -> List[List[str]]:
         """清理和预处理表格数据"""
-        cleaned_table = []
-        
-        for row in table_data:
-            cleaned_row = []
-            for cell in row:
-                if cell is None:
-                    cleaned_row.append("")
-                else:
-                    # 处理换行文本：将换行符替换为空格或HTML换行
-                    cell_text = str(cell).strip()
-                    
-                    # 如果文本中有换行符，使用HTML换行标签
-                    if '\n' in cell_text:
-                        # 对于表格中的换行，使用HTML换行标签
-                        cell_text = cell_text.replace('\n', '<br>')
-                    
-                    # 清理多余的空格
-                    cell_text = ' '.join(cell_text.split())
-                    
-                    cleaned_row.append(cell_text)
-            
-            cleaned_table.append(cleaned_row)
-        
-        return cleaned_table
+        return [[
+            ' '.join(str(cell or '').strip().replace('\n', '<br>').split())
+            for cell in row
+        ] for row in table_data]
     
     def _bbox_overlap(self, bbox1, bbox2) -> bool:
         """检查两个边界框是否重叠"""
         x1_min, y1_min, x1_max, y1_max = bbox1
         x2_min, y2_min, x2_max, y2_max = bbox2
-        
-        # 检查是否有重叠
         return not (x1_max < x2_min or x1_min > x2_max or y1_max < y2_min or y1_min > y2_max)
     
     def _bbox_overlap_ratio(self, bbox1, bbox2) -> float:
@@ -369,23 +312,18 @@ class PDFConverterV2:
         x1_min, y1_min, x1_max, y1_max = bbox1
         x2_min, y2_min, x2_max, y2_max = bbox2
         
-        # 计算重叠区域的坐标
+        # 计算重叠区域
         overlap_x_min = max(x1_min, x2_min)
         overlap_y_min = max(y1_min, y2_min)
         overlap_x_max = min(x1_max, x2_max)
         overlap_y_max = min(y1_max, y2_max)
         
-        # 检查是否有重叠
         if overlap_x_max < overlap_x_min or overlap_y_max < overlap_y_min:
             return 0.0
         
-        # 计算重叠区域面积
         overlap_area = (overlap_x_max - overlap_x_min) * (overlap_y_max - overlap_y_min)
-        
-        # 计算第一个边界框的面积
         bbox1_area = (x1_max - x1_min) * (y1_max - y1_min)
         
-        # 返回重叠比例（相对于第一个边界框的面积）
         return overlap_area / bbox1_area if bbox1_area > 0 else 0.0
     
     def _extract_text_with_table_placeholders(self, doc: fitz.Document, page_idx: int) -> str:
@@ -393,44 +331,31 @@ class PDFConverterV2:
         try:
             page = doc[page_idx]
             
-            # 检测表格区域和位置
+            # 检测表格和图片位置
             table_positions = self._detect_table_positions(doc, page_idx)
-            
-            # 检测图片位置
             image_positions = self._detect_image_positions(doc, page_idx)
             
-            # 提取所有文本块，按Y坐标排序
+            # 提取并排序文本块
             text_blocks = page.get_text("dict")["blocks"]
-            
-            # 按Y坐标排序文本块
             sorted_blocks = sorted(text_blocks, key=lambda b: b["bbox"][1])
             
-            # 合并所有元素（文本块、表格占位符、图片占位符）
+            # 合并所有元素
             all_elements = []
+            processed_table_indices = set()
             
-            # 添加文本块
             for block in sorted_blocks:
                 if "lines" in block:  # 文本块
-                    block_bbox = (block["bbox"][0], block["bbox"][1], block["bbox"][2], block["bbox"][3])
+                    block_bbox = block["bbox"]
                     
-                    # 检查当前块是否在表格区域内
-                    table_idx = -1
-                    table_overlap_ratio = 0.0
-                    for i, (table_bbox, _) in enumerate(table_positions):
-                        if self._bbox_overlap(block_bbox, table_bbox):
-                            # 计算重叠比例
-                            current_ratio = self._bbox_overlap_ratio(block_bbox, table_bbox)
-                            if current_ratio > table_overlap_ratio:
-                                table_overlap_ratio = current_ratio
-                                table_idx = i
+                    # 检查是否在表格区域内
+                    table_idx, overlap_ratio = self._find_table_overlap(block_bbox, table_positions)
                     
-                    # 优先处理表格（表格通常包含重要文本内容）
-                    if table_idx >= 0 and table_overlap_ratio > 0.7:
-                        # 添加表格占位符（只添加一次）
-                        if table_idx not in [el[1] for el in all_elements if el[0] == 'table']:
+                    if table_idx >= 0 and overlap_ratio > 0.7:
+                        # 添加表格占位符
+                        if table_idx not in processed_table_indices:
                             placeholder = f"<!-- TABLE_PLACEHOLDER_{table_idx} -->"
-                            all_elements.append(('table', table_idx, table_bbox[1], placeholder))
-                        # 跳过表格区域内的文本块
+                            all_elements.append(('table', table_idx, table_positions[table_idx][0][1], placeholder))
+                            processed_table_indices.add(table_idx)
                         continue
                     else:
                         # 正常文本块
@@ -438,26 +363,19 @@ class PDFConverterV2:
                         if block_text.strip():
                             all_elements.append(('text', -1, block_bbox[1], block_text))
             
-            # 添加图片占位符到正确位置
+            # 添加图片占位符
             if image_positions and self.config.extract_images:
                 for img_idx, (img_bbox, _) in enumerate(image_positions):
                     placeholder = f"<!-- IMAGE_PLACEHOLDER_{img_idx} -->"
                     all_elements.append(('image', img_idx, img_bbox[1], placeholder))
             
-            # 按Y坐标排序所有元素
-            all_elements.sort(key=lambda x: x[2])  # 按Y坐标排序
-            
-            # 生成格式化内容
+            # 按Y坐标排序并生成内容
+            all_elements.sort(key=lambda x: x[2])
             formatted_content = []
-            processed_table_indices = set()
             
-            for element_type, element_idx, y_pos, content in all_elements:
+            for element_type, _, _, content in all_elements:
                 if element_type == 'table':
-                    if element_idx not in processed_table_indices:
-                        formatted_content.append("")
-                        formatted_content.append(content)
-                        formatted_content.append("")
-                        processed_table_indices.add(element_idx)
+                    formatted_content.extend(["", content, ""])
                 else:
                     formatted_content.append(content)
             
@@ -467,24 +385,32 @@ class PDFConverterV2:
             self.logger.warning(f"使用PyMuPDF提取第{page_idx + 1}页文本时发生错误: {e}")
             return f"<!-- 文本提取错误: {e} -->"
     
+    def _find_table_overlap(self, block_bbox, table_positions) -> Tuple[int, float]:
+        """查找文本块与表格的重叠情况"""
+        table_idx = -1
+        max_overlap_ratio = 0.0
+        
+        for i, (table_bbox, _) in enumerate(table_positions):
+            if self._bbox_overlap(block_bbox, table_bbox):
+                overlap_ratio = self._bbox_overlap_ratio(block_bbox, table_bbox)
+                if overlap_ratio > max_overlap_ratio:
+                    max_overlap_ratio = overlap_ratio
+                    table_idx = i
+        
+        return table_idx, max_overlap_ratio
+    
     def _extract_tables_with_positions(self, doc: fitz.Document, page_idx: int) -> Dict[int, str]:
         """提取表格内容并记录位置信息"""
         tables_dict = {}
         
         try:
-            # 使用pdfplumber提取表格
             with pdfplumber.open(doc.name) as pdf:
-                page_pdfplumber = pdf.pages[page_idx]
-                tables = page_pdfplumber.find_tables()
+                tables = pdf.pages[page_idx].find_tables()
                 
                 for i, table in enumerate(tables):
-                    # 提取表格内容
                     extracted_table = self._extract_table_safely(table)
                     
-                    if (extracted_table and 
-                        len(extracted_table) > 1 and 
-                        self._is_valid_table(extracted_table)):
-                        
+                    if extracted_table and len(extracted_table) > 1 and self._is_valid_table(extracted_table):
                         markdown_table = self._convert_table_to_markdown(extracted_table)
                         tables_dict[i] = f"**表格:**\n\n{markdown_table}\n"
                         
@@ -499,12 +425,9 @@ class PDFConverterV2:
             return text_with_placeholders
         
         result = text_with_placeholders
-        
-        # 按表格索引顺序替换占位符
         for table_idx, table_content in sorted(tables_dict.items()):
             placeholder = f"<!-- TABLE_PLACEHOLDER_{table_idx} -->"
-            if placeholder in result:
-                result = result.replace(placeholder, table_content)
+            result = result.replace(placeholder, table_content)
         
         return result
     
@@ -533,91 +456,79 @@ class PDFConverterV2:
 
     def _extract_images_with_positions(self, doc: fitz.Document, page_idx: int) -> Dict[int, str]:
         """提取图片内容并记录位置信息"""
-        images_dict = {}
-        
-        # 检查是否启用图片提取
         if not self.config.extract_images:
-            return images_dict
+            return {}
             
         try:
             page = doc[page_idx]
-            
-            # 获取页面中的所有图片
             image_list = page.get_images()
             
             if not image_list:
-                return images_dict
+                return {}
             
-            # 简单地在页面末尾添加图片标记
-            # 由于PDF图片位置检测复杂，暂时采用简单方案
+            images_dict = {}
             for img_index, img_info in enumerate(image_list):
                 try:
-                    # 获取图片基本信息
-                    xref = img_info[0]
-                    
-                    # 创建图片描述
-                    image_markdown = f"\n**图片 {img_index + 1}:** [第{page_idx + 1}页, 图片{img_index + 1}]\n"
+                    image_markdown = f"\n**[第{page_idx + 1}页, 图片{img_index + 1}]**\n"
+                    self.logger.info(f"\n图片 :{image_markdown}\n")
+                    ##OCR图片内容
+                    pix = fitz.Pixmap(page.parent, img_info[0])
+                    if pix.n < 5:
+                        img_data = pix.tobytes("png")
+                        pil_img = Image.open(io.BytesIO(img_data))
+                        # pil_img.save(f"../files/imgs/temp_img_{page_idx+1}_{img_index+1}.png")
+                        ocr_text = self.ocr_service.perform_ocr(pil_img)
+                        self.logger.info(f"OCR 结果: \n{ocr_text}")
+                        image_markdown += f"```OCR 内容: \n{ocr_text} \n```\n"
+
                     images_dict[img_index] = image_markdown
-                    
                 except Exception as img_error:
                     self.logger.warning(f"处理图片 {img_index} 时发生错误: {img_error}")
-                    images_dict[img_index] = f"<!-- 图片 {img_index} 处理失败: {img_error} -->"
+                    images_dict[img_index] = f"``` 图片 {img_index} 处理失败: {img_error} \n```\n"
                     
+            return images_dict
         except Exception as e:
             self.logger.warning(f"图片提取失败: {e}")
-        
-        return images_dict
+            return {}
 
     def _detect_image_positions(self, doc: fitz.Document, page_idx: int) -> List[Tuple[Tuple[float, float, float, float], int]]:
-        """检测图片位置和索引 - 使用实际图片位置"""
-        image_positions = []
-        
-        # 检查是否启用图片提取
+        """检测图片位置和索引"""
         if not self.config.extract_images:
-            return image_positions
+            return []
             
         try:
             page = doc[page_idx]
             image_list = page.get_images()
             
             if not image_list:
-                return image_positions
+                return []
             
-            # 获取每个图片的实际位置
+            image_positions = []
             for img_index, img_info in enumerate(image_list):
-                xref = img_info[0]
-                
-                # 获取图片在页面中的实际位置
-                img_rects = page.get_image_rects(xref)
+                img_rects = page.get_image_rects(img_info[0])
                 
                 if img_rects:
-                    # 使用图片的第一个矩形位置
                     rect = img_rects[0]
                     img_bbox = (rect.x0, rect.y0, rect.x1, rect.y1)
-                    image_positions.append((img_bbox, img_index))
                 else:
-                    # 如果没有位置信息，使用默认位置（页面底部）
                     page_rect = page.rect
-                    page_height = page_rect.height
-                    page_width = page_rect.width
-                    
-                    img_height = min(100, page_height * 0.1)
+                    img_height = min(100, page_rect.height * 0.1)
                     img_spacing = 20
                     
-                    img_y_start = page_height - (img_index + 1) * (img_height + img_spacing)
+                    img_y_start = page_rect.height - (img_index + 1) * (img_height + img_spacing)
                     img_y_end = img_y_start + img_height
-                    img_x_start = page_width * 0.1
-                    img_x_end = page_width * 0.9
+                    img_x_start = page_rect.width * 0.1
+                    img_x_end = page_rect.width * 0.9
                     
                     img_bbox = (img_x_start, img_y_start, img_x_end, img_y_end)
-                    image_positions.append((img_bbox, img_index))
+                
+                image_positions.append((img_bbox, img_index))
                     
         except Exception as e:
             self.logger.warning(f"图片位置检测失败: {e}")
+            return []
         
-        # 按Y坐标排序图片位置
         image_positions.sort(key=lambda x: x[0][1])
-        
         return image_positions
 
     def _replace_placeholders_with_images(self, text_with_placeholders: str, images_dict: Dict[int, str]) -> str:
@@ -626,12 +537,8 @@ class PDFConverterV2:
             return text_with_placeholders
         
         result = text_with_placeholders
-        
-        # 按图片索引顺序替换占位符
-        for img_idx, img_content in sorted(images_dict.items()):
-            placeholder = f"<!-- IMAGE_PLACEHOLDER_{img_idx} -->"
-            if placeholder in result:
-                result = result.replace(placeholder, img_content)
+        for img_idx, img_content in images_dict.items():
+            result = result.replace(f"<!-- IMAGE_PLACEHOLDER_{img_idx} -->", img_content)
         
         return result
     
@@ -674,23 +581,14 @@ class PDFConverterV2:
             
             for span in sorted_spans:
                 text = span["text"]
-                # 保留原始空格，但清理多余空格
                 if text and text.strip():
-                    # 清理多余空格（保留单词间单个空格）
                     cleaned_text = ' '.join(text.split())
                     
-                    # 更智能的格式判断
                     font_size = span.get("size", 0)
                     font_flags = span.get("flags", 0)
+                    is_title = font_size > 14 or (font_flags & 2)
                     
-                    # 判断是否为标题（字体大小较大或加粗）
-                    is_bold = font_flags & 2  # 检查是否为加粗
-                    is_title = font_size > 14 or is_bold
-                    
-                    if is_title:
-                        line_spans.append(f"**{cleaned_text}**")
-                    else:
-                        line_spans.append(cleaned_text)
+                    line_spans.append(f"**{cleaned_text}**" if is_title else cleaned_text)
             
             if line_spans:
                 # 将同一行的span用空格连接，保留原始空格结构
@@ -724,25 +622,17 @@ class PDFConverterV2:
             if not block:
                 continue
                 
-            # 如果当前块以换行符开头，可能是段落分隔
-            if block.startswith('\n') and merged_content:
-                # 确保前一个块有换行符结尾
-                if not merged_content[-1].endswith('\n'):
-                    merged_content[-1] += '\n'
+            if block.startswith('\n') and merged_content and not merged_content[-1].endswith('\n'):
+                merged_content[-1] += '\n'
                 
             merged_content.append(block)
             
-            # 如果不是最后一个块，检查是否需要添加分隔
             if i < len(text_blocks) - 1:
                 next_block = text_blocks[i + 1].strip()
                 if next_block and not next_block.startswith('\n'):
-                    # 如果下一个块不是段落开始，添加空格分隔
                     merged_content.append(" ")
         
-        # 合并所有内容
         result = ''.join(merged_content)
-        
-        # 清理多余的空格和换行符
         result = '\n'.join(line.strip() for line in result.splitlines() if line.strip())
         
         return result
