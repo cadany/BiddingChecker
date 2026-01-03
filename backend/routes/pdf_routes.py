@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
 import os
 from security import security_check, csrf_protect
-from service.pdf_service import analyze_pdf_page
+from service.pdf_page_analyze import analyze_pdf_page
 
 # 创建pdf蓝图
 pdf_bp = Blueprint('pdf_bp', __name__)

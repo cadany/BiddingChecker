@@ -1,7 +1,6 @@
 import fitz  # PyMuPDF
 import os
 
-
 def analyze_pdf_page(pdf_path, page_num):
     """分析PDF文件的指定页面"""
     doc = fitz.open(pdf_path)
@@ -47,3 +46,20 @@ def analyze_pdf_page(pdf_path, page_num):
     
     return result
 
+if __name__ == "__main__":
+    # 测试函数
+    import sys
+    if len(sys.argv) != 3:
+        print("Usage: python pdf_page_analyze.py <pdf_path> <page_num>")
+        sys.exit(1)
+    
+    pdf_path = sys.argv[1]
+    page_num = int(sys.argv[2])
+    
+    try:
+        result = analyze_pdf_page(pdf_path, page_num)
+        print("PDF Analysis Result:")
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)

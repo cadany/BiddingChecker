@@ -1,17 +1,12 @@
 from flask import Blueprint, jsonify, request
 from security import security_check, validate_input_types, csrf_protect
-from service.bid_service import (
-    get_all_bids,
-    create_bid,
-    get_bid_by_id,
-    update_bid,
-    delete_bid,
-    get_bid_analysis,
-    clear_bids
-)
+from service.bid_service import BidService
 
 # 创建bid蓝图
 bid_bp = Blueprint('bid_bp', __name__)
+
+# 创建全局BidService实例
+bid_service = BidService()
 
 @bid_bp.route('/', methods=['GET'])
 @security_check
@@ -45,7 +40,7 @@ def get_bids():
     if order and not isinstance(order, str):
         return jsonify({'error': 'Invalid order parameter'}), 400
     
-    bids, count = get_all_bids(sort_by, order)
+    bids, count = bid_service.get_all_bids(sort_by, order)
     
     return jsonify({
         'bids': bids,
@@ -88,7 +83,7 @@ def create_bid_endpoint():
     if 'status' in data and data['status'] not in ['active', 'inactive', 'won', 'lost']:
         return jsonify({'error': 'Invalid status'}), 400
     
-    new_bid = create_bid(
+    new_bid = bid_service.create_bid(
         item_name=data['item_name'],
         bid_amount=bid_amount,
         bidder_name=data.get('bidder_name', 'Anonymous'),
@@ -108,7 +103,7 @@ def get_bid_endpoint(bid_id):
     if bid_id <= 0:
         return jsonify({'error': 'Invalid bid ID'}), 400
     
-    bid = get_bid_by_id(bid_id)
+    bid = bid_service.get_bid_by_id(bid_id)
     
     if not bid:
         return jsonify({'error': 'Bid not found'}), 404
@@ -124,7 +119,7 @@ def update_bid_endpoint(bid_id):
     if bid_id <= 0:
         return jsonify({'error': 'Invalid bid ID'}), 400
     
-    bid = get_bid_by_id(bid_id)
+    bid = bid_service.get_bid_by_id(bid_id)
     
     if not bid:
         return jsonify({'error': 'Bid not found'}), 404
@@ -160,7 +155,7 @@ def update_bid_endpoint(bid_id):
         if 'status' in data and data['status'] not in ['active', 'inactive', 'won', 'lost']:
             return jsonify({'error': 'Invalid status'}), 400
     
-    updated_bid = update_bid(bid_id, data)
+    updated_bid = bid_service.update_bid(bid_id, data)
     
     return jsonify({
         'message': 'Bid updated successfully',
@@ -176,7 +171,7 @@ def delete_bid_endpoint(bid_id):
     if bid_id <= 0:
         return jsonify({'error': 'Invalid bid ID'}), 400
     
-    success = delete_bid(bid_id)
+    success = bid_service.delete_bid(bid_id)
     
     if not success:
         return jsonify({'error': 'Bid not found'}), 404
@@ -187,7 +182,7 @@ def delete_bid_endpoint(bid_id):
 @security_check
 def get_bid_analysis_endpoint():
     """获取竞价分析"""
-    analysis = get_bid_analysis()
+    analysis = bid_service.get_bid_analysis()
     
     if analysis is None:
         return jsonify({
@@ -206,6 +201,6 @@ def get_bid_analysis_endpoint():
 def clear_bids_endpoint():
     """清空所有竞价数据（仅用于测试）"""
     # 这里可以添加额外的安全检查，比如验证请求来源或添加确认机制
-    clear_bids()
+    bid_service.clear_bids()
     
     return jsonify({'message': 'All bids cleared successfully'})
