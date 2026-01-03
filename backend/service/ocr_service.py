@@ -114,14 +114,14 @@ class OCRService:
         # 对于低质量图像进行适度增强，高质量图像则最小化处理
         height, width = img_array_bgr.shape[:2]
 
-        if max(height, width) > 1200:
+        # 当图片尺寸大于1200时，进行缩小处理，避免OCR识别失败或时间超时或“segmentation fault”
+        if max(height, width) > 1200:  
             # 图像尺寸太大，可能需要缩小
             scale = 1200 / max(height, width)
             new_width = int(width * scale)
             new_height = int(height * scale)
             img_array_bgr = cv2.resize(img_array_bgr, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
             
-        
         # 检查图像大小，只在确实很小时才放大，避免改变文本顺序
         # 提高阈值以避免对正常大小的图像进行不必要的处理
         if height < 100 or width < 100:
