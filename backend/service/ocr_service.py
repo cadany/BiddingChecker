@@ -30,7 +30,7 @@ class OCRService:
                 self.ocr = PaddleOCR(lang='ch',
                     # device="gpu",
                     # enable_hpi=True,
-                    cpu_threads=8,
+                    # cpu_threads=8,
                     use_doc_orientation_classify=False, # 指定不使用文档方向分类模型
                     use_doc_unwarping=False, # 指定不使用文本图像矫正模型
                     use_textline_orientation=False # 指定不使用文本行方向分类模型    

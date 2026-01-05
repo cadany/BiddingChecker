@@ -460,7 +460,7 @@ class PDFConverterV2(LogMixin):
                         # pil_img.save(f"../files/imgs/temp_img_{page_idx+1}_{img_index+1}.png")
                         ocr_text = self.ocr_service.perform_ocr(pil_img)
                         self.log_info(f"OCR 结果: \n{ocr_text}")
-                        image_markdown += f"```OCR 内容: \n{ocr_text} \n```\n"
+                        image_markdown += f"```OCR 内容 [第{page_idx + 1}页, 图片{img_index + 1}]: \n{ocr_text} \n```\n"
 
                     images_dict[img_index] = image_markdown
                 except Exception as img_error:
