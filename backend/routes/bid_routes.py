@@ -1,206 +1,207 @@
-from flask import Blueprint, jsonify, request
-from security import security_check, validate_input_types, csrf_protect
+from fastapi import APIRouter, HTTPException, Depends, Query, Path, status
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any
+from security import security_check, csrf_protect
 from service.bid_service import BidService
 
-# 创建bid蓝图
-bid_bp = Blueprint('bid_bp', __name__)
+# 创建FastAPI路由器
+bid_router = APIRouter(prefix="/bids", tags=["bids"])
 
-# 创建全局BidService实例
-bid_service = BidService()
+# 依赖注入BidService实例
+_bid_service_instance = None
 
-@bid_bp.route('/', methods=['GET'])
-@security_check
-@csrf_protect
-def home():
-    return jsonify({
-        'message': 'Welcome to BiddingChecker API',
-        'status': 'running',
-        'endpoints': {
-            'get_bids': 'GET /api/bids',
-            'create_bid': 'POST /api/bids',
-            'get_bid': 'GET /api/bids/<id>',
-            'update_bid': 'PUT /api/bids/<id>',
-            'delete_bid': 'DELETE /api/bids/<id>',
-            'get_bid_analysis': 'GET /api/bids/analysis',
-            'clear_bids': 'POST /api/bids/clear',
-            'analyze_pdf': 'POST /api/pdf/analyze (file upload with page_num)'
-        }
-    })
+def get_bid_service() -> BidService:
+    """获取BidService实例（单例模式）"""
+    global _bid_service_instance
+    if _bid_service_instance is None:
+        _bid_service_instance = BidService()
+    return _bid_service_instance
 
-@bid_bp.route('/api/bids', methods=['GET'])
-@security_check
-def get_bids():
+# 定义数据模型
+class BidCreate(BaseModel):
+    item_name: str = Field(..., max_length=255, description="物品名称")
+    bid_amount: float = Field(..., gt=0, description="竞价金额")
+    bidder_name: Optional[str] = Field(None, max_length=100, description="竞价者名称")
+    status: Optional[str] = Field("active", pattern="^(active|inactive|won|lost)$", description="竞价状态")
+
+class BidUpdate(BaseModel):
+    item_name: Optional[str] = Field(None, max_length=255, description="物品名称")
+    bid_amount: Optional[float] = Field(None, gt=0, description="竞价金额")
+    bidder_name: Optional[str] = Field(None, max_length=100, description="竞价者名称")
+    status: Optional[str] = Field(None, pattern="^(active|inactive|won|lost)$", description="竞价状态")
+
+class BidResponse(BaseModel):
+    id: int
+    item_name: str
+    bid_amount: float
+    bidder_name: str
+    created_at: str
+    status: str
+
+class BidsListResponse(BaseModel):
+    bids: List[BidResponse]
+    count: int
+
+@bid_router.get(
+    "/",
+    response_model=BidsListResponse,
+    summary="获取所有竞价",
+    description="获取系统中的所有竞价信息，支持排序"
+)
+async def get_bids(
+    sort: str = Query("created_at", description="排序字段"),
+    order: str = Query("desc", description="排序顺序: asc/desc"),
+    bid_service: BidService = Depends(get_bid_service),
+    _: bool = Depends(security_check),
+    csrf_token: str = Depends(csrf_protect)
+) -> BidsListResponse:
     """获取所有竞价信息"""
-    sort_by = request.args.get('sort', 'created_at')
-    order = request.args.get('order', 'desc')
+    bids, count = await bid_service.get_all_bids(sort, order)
     
-    # 验证参数类型
-    if sort_by and not isinstance(sort_by, str):
-        return jsonify({'error': 'Invalid sort parameter'}), 400
-    if order and not isinstance(order, str):
-        return jsonify({'error': 'Invalid order parameter'}), 400
+    # 将字典数据转换为BidResponse对象
+    bid_responses = [
+        BidResponse(
+            id=bid['id'],
+            item_name=bid['item_name'],
+            bid_amount=bid['bid_amount'],
+            bidder_name=bid['bidder_name'],
+            created_at=bid['created_at'],
+            status=bid['status']
+        ) for bid in bids
+    ]
     
-    bids, count = bid_service.get_all_bids(sort_by, order)
-    
-    return jsonify({
-        'bids': bids,
-        'count': count
-    })
+    # 在实际应用中，应该将CSRF令牌添加到响应头中
+    # 这里简化实现，直接返回响应
+    return BidsListResponse(bids=bid_responses, count=count)
 
-@bid_bp.route('/api/bids', methods=['POST'])
-@security_check
-@csrf_protect
-def create_bid_endpoint():
+@bid_router.post(
+    "/",
+    response_model=Dict[str, Any],
+    status_code=status.HTTP_201_CREATED,
+    summary="创建新竞价",
+    description="创建一个新的竞价记录"
+)
+async def create_bid(
+    bid: BidCreate,
+    bid_service: BidService = Depends(get_bid_service),
+    _: bool = Depends(security_check),
+    csrf_token: str = Depends(csrf_protect)
+) -> Dict[str, Any]:
     """创建新的竞价"""
-    data = request.get_json()
-    
-    if not data or 'item_name' not in data or 'bid_amount' not in data:
-        return jsonify({'error': 'Missing required fields: item_name, bid_amount'}), 400
-    
-    # 验证输入类型
-    is_valid, error_msg = validate_input_types(data, {
-        'bid_amount': (int, float),
-        'bidder_name': str,
-        'status': str
-    })
-    if not is_valid:
-        return jsonify({'error': error_msg}), 400
-    
-    # 验证数据合理性
-    if not isinstance(data['item_name'], str) or len(data['item_name']) > 255:
-        return jsonify({'error': 'Invalid item_name'}), 400
-    
-    try:
-        bid_amount = float(data['bid_amount'])
-        if bid_amount <= 0:
-            return jsonify({'error': 'Bid amount must be positive'}), 400
-    except (ValueError, TypeError):
-        return jsonify({'error': 'Invalid bid_amount'}), 400
-    
-    if 'bidder_name' in data and (not isinstance(data['bidder_name'], str) or len(data['bidder_name']) > 100):
-        return jsonify({'error': 'Invalid bidder_name'}), 400
-    
-    if 'status' in data and data['status'] not in ['active', 'inactive', 'won', 'lost']:
-        return jsonify({'error': 'Invalid status'}), 400
-    
-    new_bid = bid_service.create_bid(
-        item_name=data['item_name'],
-        bid_amount=bid_amount,
-        bidder_name=data.get('bidder_name', 'Anonymous'),
-        status=data.get('status', 'active')
+    new_bid = await bid_service.create_bid(
+        item_name=bid.item_name,
+        bid_amount=bid.bid_amount,
+        bidder_name=bid.bidder_name or "Anonymous",
+        status=bid.status or "active"
     )
     
-    return jsonify({
-        'message': 'Bid created successfully',
-        'bid': new_bid
-    }), 201
+    return {
+        "message": "Bid created successfully",
+        "bid": new_bid
+    }
 
-@bid_bp.route('/api/bids/<int:bid_id>', methods=['GET'])
-@security_check
-def get_bid_endpoint(bid_id):
+@bid_router.get(
+    "/{bid_id}",
+    response_model=Dict[str, Any],
+    summary="获取特定竞价",
+    description="根据ID获取特定的竞价信息"
+)
+async def get_bid(
+    bid_id: int = Path(..., gt=0, description="竞价ID"),
+    bid_service: BidService = Depends(get_bid_service),
+    _: bool = Depends(security_check)
+) -> Dict[str, Any]:
     """获取特定竞价信息"""
-    # 验证bid_id合理性
-    if bid_id <= 0:
-        return jsonify({'error': 'Invalid bid ID'}), 400
-    
-    bid = bid_service.get_bid_by_id(bid_id)
+    bid = await bid_service.get_bid_by_id(bid_id)
     
     if not bid:
-        return jsonify({'error': 'Bid not found'}), 404
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bid not found"
+        )
     
-    return jsonify({'bid': bid})
+    return {"bid": bid}
 
-@bid_bp.route('/api/bids/<int:bid_id>', methods=['PUT'])
-@security_check
-@csrf_protect
-def update_bid_endpoint(bid_id):
+@bid_router.put(
+    "/{bid_id}",
+    response_model=Dict[str, Any],
+    summary="更新竞价",
+    description="更新特定竞价的详细信息"
+)
+async def update_bid(
+    bid_id: int = Path(..., gt=0, description="竞价ID"),
+    bid_update: BidUpdate = None,
+    bid_service: BidService = Depends(get_bid_service),
+    _: bool = Depends(security_check),
+    csrf_token: str = Depends(csrf_protect)
+) -> Dict[str, Any]:
     """更新特定竞价信息"""
-    # 验证bid_id合理性
-    if bid_id <= 0:
-        return jsonify({'error': 'Invalid bid ID'}), 400
-    
-    bid = bid_service.get_bid_by_id(bid_id)
+    bid = await bid_service.get_bid_by_id(bid_id)
     
     if not bid:
-        return jsonify({'error': 'Bid not found'}), 404
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bid not found"
+        )
     
-    data = request.get_json()
+    if bid_update is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No update data provided"
+        )
     
-    if data:
-        # 验证输入类型
-        is_valid, error_msg = validate_input_types(data, {
-            'bid_amount': (int, float),
-            'bidder_name': str,
-            'status': str,
-            'item_name': str
-        })
-        if not is_valid:
-            return jsonify({'error': error_msg}), 400
-        
-        # 验证数据合理性
-        if 'item_name' in data and (not isinstance(data['item_name'], str) or len(data['item_name']) > 255):
-            return jsonify({'error': 'Invalid item_name'}), 400
-        
-        if 'bid_amount' in data:
-            try:
-                bid_amount = float(data['bid_amount'])
-                if bid_amount <= 0:
-                    return jsonify({'error': 'Bid amount must be positive'}), 400
-            except (ValueError, TypeError):
-                return jsonify({'error': 'Invalid bid_amount'}), 400
-        
-        if 'bidder_name' in data and (not isinstance(data['bidder_name'], str) or len(data['bidder_name']) > 100):
-            return jsonify({'error': 'Invalid bidder_name'}), 400
-        
-        if 'status' in data and data['status'] not in ['active', 'inactive', 'won', 'lost']:
-            return jsonify({'error': 'Invalid status'}), 400
+    # 将Pydantic模型转换为字典
+    update_data = bid_update.dict(exclude_unset=True)
     
-    updated_bid = bid_service.update_bid(bid_id, data)
+    updated_bid = await bid_service.update_bid(bid_id, update_data)
     
-    return jsonify({
-        'message': 'Bid updated successfully',
-        'bid': updated_bid
-    })
+    return {
+        "message": "Bid updated successfully",
+        "bid": updated_bid
+    }
 
-@bid_bp.route('/api/bids/<int:bid_id>', methods=['DELETE'])
-@security_check
-@csrf_protect
-def delete_bid_endpoint(bid_id):
+@bid_router.delete(
+    "/{bid_id}",
+    response_model=Dict[str, Any],
+    summary="删除竞价",
+    description="删除特定的竞价记录"
+)
+async def delete_bid(
+    bid_id: int = Path(..., gt=0, description="竞价ID"),
+    bid_service: BidService = Depends(get_bid_service),
+    _: bool = Depends(security_check),
+    csrf_token: str = Depends(csrf_protect)
+) -> Dict[str, Any]:
     """删除特定竞价"""
-    # 验证bid_id合理性
-    if bid_id <= 0:
-        return jsonify({'error': 'Invalid bid ID'}), 400
-    
-    success = bid_service.delete_bid(bid_id)
+    success = await bid_service.delete_bid(bid_id)
     
     if not success:
-        return jsonify({'error': 'Bid not found'}), 404
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bid not found"
+        )
     
-    return jsonify({'message': f'Bid {bid_id} deleted successfully'})
+    return {"message": f"Bid {bid_id} deleted successfully"}
 
-@bid_bp.route('/api/bids/analysis', methods=['GET'])
-@security_check
-def get_bid_analysis_endpoint():
+@bid_router.get("/analysis", dependencies=[Depends(security_check)])
+async def get_bid_analysis_endpoint(bid_service: BidService = Depends(get_bid_service)):
     """获取竞价分析"""
-    analysis = bid_service.get_bid_analysis()
+    analysis = await bid_service.get_bid_analysis()
     
     if analysis is None:
-        return jsonify({
-            'message': 'No bids available for analysis',
-            'analysis': {}
-        })
+        return {
+            "message": "No bids available for analysis",
+            "analysis": {}
+        }
     
-    return jsonify({
-        'analysis': analysis,
-        'message': 'Bid analysis generated successfully'
-    })
+    return {
+        "analysis": analysis,
+        "message": "Bid analysis generated successfully"
+    }
 
-@bid_bp.route('/api/bids/clear', methods=['POST'])
-@security_check
-@csrf_protect
-def clear_bids_endpoint():
+@bid_router.post("/clear", dependencies=[Depends(security_check), Depends(csrf_protect)])
+async def clear_bids_endpoint(bid_service: BidService = Depends(get_bid_service)):
     """清空所有竞价数据（仅用于测试）"""
-    # 这里可以添加额外的安全检查，比如验证请求来源或添加确认机制
-    bid_service.clear_bids()
+    await bid_service.clear_bids()
     
-    return jsonify({'message': 'All bids cleared successfully'})
+    return {"message": "All bids cleared successfully"}

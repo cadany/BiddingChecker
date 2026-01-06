@@ -1,10 +1,10 @@
 """
-竞价服务模块
-使用重构后的统一日志系统 - 纯LogMixin模式
+竞价服务模块 - FastAPI风格重构
+使用异步支持和强类型注解
 """
 
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 import sys
 import os
 
@@ -15,29 +15,40 @@ from utils.logger import LogMixin
 
 
 class BidService(LogMixin):
-    """竞价服务类，使用纯LogMixin模式"""
+    """竞价服务类 - FastAPI风格"""
     
     def __init__(self):
         super().__init__()
-        self.bids_data = []
-        self.bid_counter = 1
+        self.bids_data: List[Dict[str, Any]] = []
+        self.bid_counter: int = 1
         self.log_info("BidService初始化完成")
     
-    def get_all_bids(self, sort_by: str = 'created_at', order: str = 'desc') -> tuple:
+    async def get_all_bids(self, sort_by: str = 'created_at', order: str = 'desc') -> Tuple[List[Dict[str, Any]], int]:
         """获取所有竞价信息"""
         self.log_info(f"获取所有竞价，排序方式: {sort_by}, 顺序: {order}")
         
-        sorted_bids = sorted(self.bids_data, key=lambda x: x[sort_by], reverse=(order == 'desc'))
+        # 验证排序字段
+        valid_sort_fields = {'id', 'item_name', 'bid_amount', 'bidder_name', 'created_at', 'status'}
+        if sort_by not in valid_sort_fields:
+            sort_by = 'created_at'
+        
+        # 验证排序顺序
+        valid_orders = {'asc', 'desc'}
+        if order not in valid_orders:
+            order = 'desc'
+        
+        sorted_bids = sorted(self.bids_data, key=lambda x: x.get(sort_by, ''), reverse=(order == 'desc'))
         total_count = len(sorted_bids)
         
         self.log_info(f"成功获取 {total_count} 条竞价记录")
         return sorted_bids, total_count
     
-    def create_bid(self, item_name: str, bid_amount: float, 
+    async def create_bid(self, item_name: str, bid_amount: float, 
                    bidder_name: str = 'Anonymous', status: str = 'active') -> Dict[str, Any]:
         """创建新的竞价"""
         self.log_info(f"创建竞价 - 物品: {item_name}, 金额: {bid_amount}, 竞价者: {bidder_name}")
         
+        # 创建新的竞价记录
         new_bid = {
             'id': self.bid_counter,
             'item_name': item_name,
@@ -50,10 +61,10 @@ class BidService(LogMixin):
         self.bids_data.append(new_bid)
         self.bid_counter += 1
         
-        self.log_info(f"竞价创建成功，ID: {new_bid['id']}")
+        self.log_info(f"竞价创建成功 - ID: {new_bid['id']}")
         return new_bid
     
-    def get_bid_by_id(self, bid_id: int) -> Optional[Dict[str, Any]]:
+    async def get_bid_by_id(self, bid_id: int) -> Optional[Dict[str, Any]]:
         """获取特定竞价信息"""
         self.log_info(f"查询竞价信息，ID: {bid_id}")
         
@@ -66,7 +77,7 @@ class BidService(LogMixin):
         
         return bid
     
-    def update_bid(self, bid_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def update_bid(self, bid_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """更新特定竞价信息"""
         self.log_info(f"更新竞价信息，ID: {bid_id}, 数据: {data}")
         
@@ -92,7 +103,7 @@ class BidService(LogMixin):
         self.log_info(f"竞价更新成功，更新的字段: {updated_fields}")
         return self.bids_data[bid_index]
     
-    def delete_bid(self, bid_id: int) -> bool:
+    async def delete_bid(self, bid_id: int) -> bool:
         """删除特定竞价"""
         self.log_info(f"删除竞价，ID: {bid_id}")
         
@@ -106,7 +117,7 @@ class BidService(LogMixin):
         self.log_info(f"竞价删除成功，物品: {bid['item_name']}")
         return True
     
-    def get_bid_analysis(self) -> Optional[Dict[str, Any]]:
+    async def get_bid_analysis(self) -> Optional[Dict[str, Any]]:
         """获取竞价分析"""
         self.log_info("开始竞价分析")
         
@@ -140,7 +151,7 @@ class BidService(LogMixin):
         self.log_info(f"竞价分析完成，总计: {total_bids} 条记录")
         return analysis
     
-    def clear_bids(self):
+    async def clear_bids(self):
         """清空所有竞价数据"""
         self.log_warning("清空所有竞价数据")
         
@@ -148,7 +159,9 @@ class BidService(LogMixin):
         self.bids_data = []
         self.bid_counter = 1
         
-        self.log_info(f"竞价数据已清空，原数据量: {original_count}")
+        self.log_info(f"已清空 {original_count} 条竞价记录")
+        
+        return {"cleared_count": original_count}
 
 
 # 测试代码

@@ -1,42 +1,69 @@
 # BiddingChecker
+
 ## 项目介绍
-一个用于处理PDF文档的项目，主要功能是将PDF文档转换为文本，并对包含图片的内容进行OCR识别。
+
+对PDF格式的应标文件进行分析，提取文件中的文字内容，并对文件中的图片进行OCR识别，最后将提取出的文字内容保存为Markdown格式的文件。
+根据检查项提示词，对提取出的文字内容进行检查，根据检查项提示词的要求，对检查结果进行评估，返回检查结果。
 
 ## 功能介绍
+
 * 对PDF文档进行转换，将PDF文档转换为文本文件。
 * 对PDF文档中包含的图片进行OCR识别，提取图片中的文字。
 * 对转换后的文本文件进行后处理，包括段落间距、字体大小、图片位置等。
 
-### 环境依赖
+## 环境依赖
 
-source .venv/bin/activate
+* Python 3.12.6
+
+#### 环境准备
+
+##### 创建虚拟环境
+```
+brew install pyenv
+pyenv install 3.12.6
+pyenv list
+
+# 配置shell（以zsh为例）
+echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.zshrc
+echo 'command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.zshrc
+echo 'eval "$(pyenv init -)"' >> ~/.zshrc
+source ~/.zshrc
+
+python -m venv .venv312
+
+# 激活虚拟环境
+source .venv312/bin/activate
 
 ```
-# 安装依赖
-pip install -r requirements.txt
 
-# 安装Tesseract OCR (MacOS)
- brew install tesseract
- brew install tesseract-lang
-
-# 安装Tesseract OCR (Linux)
-apt install tesseract-ocr
-apt install tesseract-lang
-
+##### 安装依赖
+```
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-## 运行项目
+#### 运行项目
 
 ```
-python main.py --input_path path/to/input.pdf --output_path path/to/output.txt
-```
+# PDF转换为Markdown
+python backend/service/pdf_converter_v2.py ./files/fj-23p374.pdf -o ./fj-23p374.md
 
-## 测试项目
+输出文件: ../files/fj-23p374.md
+处理页面: 374
+发现表格: 0
+处理时间: 3993.14秒
 
+# OCR识别图片中的文字
+python backend/test/test_ocr_service.py
 ```
-# 测试项目
-pytest
-```
+## 开发
+
+### 接口
+   - `/api/bidding/file/upload`：上传文件，返回文件id。
+   - `/api/bidding/file/delete`：传入文件id，删除文件。
+   - `/api/bidding/file/convert2md`：传入文件id，将文件转换为Markdown格式。
+   - `/api/bidding/file/convert2md/stop`：传入任务id，停止文件转换任务。
+   - `/api/bidding/file/convert2md/progress`：传入任务id，返回文件转换任务进度。
+   - `/api/bidding/file/convert2md/result`：传入任务id，返回文件转换任务结果。
 
 ## 贡献代码
 
@@ -46,30 +73,14 @@ pytest
 
  Apache 2.0 License
 
-## 提示词
+## 页面
 
-1、**需求背景**
-需要处理一份900多页的PDF文档，文档是由word另存为输出的。文档包括居中的主标题、分级的章节目录、潜入在正文段落或表格的图片、多行多列的表格、包含行合并或列合并的表格、右对齐的落款、仅包含多张图片的章节等格式的内容；
-
-2、**功能描述**
-需要将这份PDF转换为文本，并能很好的保留复杂排版，对于包含图片的内容如果PDF文字层没有图片文字，需要使用OCR完成文字提取并插入到对应图片的位置。后续这份提取出的文字需要给大语言模型处理，需要考虑对大语言模型的友好。
-
-3、**技术要求**
-* 开发环境基于python3.9.6 ，推荐使用虚拟环境管理依赖。
-* 对PDF文档的处理需要认真考虑对PDF文档的格式和内容，避免对文档结构和内容的破坏。
-* 确保转换为文本后的文档具有良好的可读性，包括段落间距、字体大小、图片位置等，同时需要考虑对大语言模型的友好，避免对文档内容的误解或错误理解。
-* 对文档中包含的表格需要进行高度还原，包括合并单元格、对齐方式、边框等。
-* 对文档中包含的图片需要进行高度还原，包括图片位置、大小、比例等。
-* 对文档中包含的图片文字需要使用OCR进行提取，并插入到对应图片的位置。
-* 输入为PDF文档文件路径、起始页码、结束页码，起止页码没有输入时，默认处理全部页码。输出为转换后的文本文件路径。
-* 文档篇幅较大，处理时间可能较长，建议在有足够内存和处理能力的环境下运行。
-* 处理过程中需要反馈处理进度，避免处理过程中出现中断。
-* OCR考虑扩展性，可支持本地部署的OCR服务，也可支持调用云服务的OCR接口。
-* 需要确保转换后的文本文件与原始PDF文档的内容保持一致，避免内容丢失或错误，以及页码不匹配等现象。
-* 考虑工程化生产级别的代码质量，包括代码规范、注释、异常处理等。
-* 考虑代码的可维护性和可扩展性，方便后续功能的添加和优化。
-* 考虑工程化部署，包括Docker化等。
-* 考虑工程稳定性，包括异常处理、日志记录等。
-
-
-
+1、检查项管理页面
+（1）检查清单列表维护，两个字段：检查项名称、要求说明
+2、招标文件分析页面
+（1）上传招标文件，返回文件id
+（2）启动招标文件分析，传入文件id，返回任务id
+（3）查询分析任务进度，传入任务id，返回分析任务进度
+（4）查询分析任务结果，传入任务id，返回分析任务结果
+3、分析结果页面
+（1）展示分析结果，包括检查项名称、要求说明、检查结果、评估结果

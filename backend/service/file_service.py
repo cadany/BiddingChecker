@@ -37,7 +37,20 @@ class FileService(LogMixin):
     
     def generate_file_id(self) -> str:
         """生成唯一的文件ID"""
-        return str(uuid.uuid4())
+        import datetime
+        import random
+        import string
+        
+        # 获取当前日期时间，格式：YYYYMMDD-HHMMSS
+        current_time = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        
+        # 生成8位随机字符（字母和数字）
+        random_chars = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+        
+        # 组合成格式：file-日期时分秒-随机8位ID
+        file_id = f"file-{current_time}-{random_chars}"
+        
+        return file_id
     
     def save_file(self, file_data: bytes, filename: str, file_type: str = None) -> Dict[str, Any]:
         """

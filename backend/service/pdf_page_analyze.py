@@ -1,7 +1,7 @@
 import fitz  # PyMuPDF
 import os
 
-def analyze_pdf_page(pdf_path, page_num):
+async def analyze_pdf_page(pdf_path, page_num):
     """分析PDF文件的指定页面"""
     doc = fitz.open(pdf_path)
     
