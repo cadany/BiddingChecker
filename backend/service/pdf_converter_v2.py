@@ -8,6 +8,7 @@ import pdfplumber
 import os
 import sys
 import time
+import logging
 from typing import Optional, Dict, List, Tuple, Any
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,8 +17,6 @@ import io
 
 # 添加项目根目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from utils.logger import LogMixin
 
 # 修复OCR服务导入
 from service.ocr_service import OCRService
@@ -38,14 +37,13 @@ class ConversionConfig:
     progress_update_interval: int = 10  # 进度更新间隔（页面数）
     
 
-class PDFConverterV2(LogMixin):
+class PDFConverterV2:
     """
     PDF转Markdown转换器 V2
     专门处理大文件和高稳定性需求
     """
     
     def __init__(self, config: Optional[ConversionConfig] = None):
-        super().__init__()
         self.config = config or ConversionConfig()
         self.processing_stats = {
             'total_pages': 0,
@@ -56,7 +54,9 @@ class PDFConverterV2(LogMixin):
             'end_time': None
         }
         self.ocr_service = OCRService()
-        self.log_info("PDFConverterV2初始化完成")
+        self.logger = logging.getLogger(f"service.{self.__class__.__name__}")
+        # 使用uvicorn的日志配置，不添加自定义处理器
+        self.logger.info("PDFConverterV2初始化完成")
     
     def convert_pdf(
         self,
@@ -86,9 +86,9 @@ class PDFConverterV2(LogMixin):
         if output_path is None:
             output_path = self._generate_output_path(pdf_path)
         
-        self.log_info(f"开始转换PDF: {pdf_path}")
-        self.log_info(f"输出路径: {output_path}")
-        self.log_info(f"页面范围: {start_page}-{end_page or '末尾'}")
+        self.logger.info(f"开始转换PDF: {pdf_path}")
+        self.logger.info(f"输出路径: {output_path}")
+        self.logger.info(f"页面范围: {start_page}-{end_page or '末尾'}")
         
         try:
             # 打开PDF文件
@@ -103,8 +103,8 @@ class PDFConverterV2(LogMixin):
                 actual_start = max(1, start_page)
                 actual_end = min(total_pages, end_page)
                 
-                self.log_info(f"实际处理页面: {actual_start}-{actual_end} (共{total_pages}页)")
-                
+                self.logger.info(f"实际处理页面: {actual_start}-{actual_end} (共{total_pages}页)")
+
                 # 分批次处理页面
                 markdown_content = self._process_pages_in_batches(doc, actual_start, actual_end)
                 
@@ -115,7 +115,7 @@ class PDFConverterV2(LogMixin):
                 self.processing_stats['end_time'] = time.time()
                 processing_time = self.processing_stats['end_time'] - self.processing_stats['start_time']
                 
-                self.log_info(f"转换完成! 处理了{self.processing_stats['processed_pages']}页，"
+                self.logger.info(f"转换完成! 处理了{self.processing_stats['processed_pages']}页，"
                                f"发现{self.processing_stats['tables_found']}个表格，"
                                f"耗时{processing_time:.2f}秒")
                 
@@ -129,9 +129,9 @@ class PDFConverterV2(LogMixin):
                 }
                 
         except Exception as e:
-            self.log_error(f"转换过程中发生错误: {e}")
+            self.logger.error(f"转换过程中发生错误: {e}")
             self.processing_stats['errors'].append(str(e))
-            
+            raise
             return {
                 'success': False,
                 'error': str(e),
@@ -154,9 +154,12 @@ class PDFConverterV2(LogMixin):
     
     def _generate_output_path(self, pdf_path: str) -> str:
         """生成输出文件路径"""
-        pdf_name = Path(pdf_path).stem
+        pdf_path_obj = Path(pdf_path)
+        pdf_name = pdf_path_obj.stem
         timestamp = int(time.time())
-        return f"{pdf_name}_converted_{timestamp}.md"
+        # 保持与原文件相同的目录路径
+        output_filename = f"{pdf_name}_converted_{timestamp}.md"
+        return str(pdf_path_obj.parent / output_filename)
     
     def _process_pages_in_batches(
         self, 
@@ -172,7 +175,7 @@ class PDFConverterV2(LogMixin):
         for batch_start in range(start_page - 1, end_page, chunk_size):
             batch_end = min(batch_start + chunk_size, end_page)
             
-            self.log_info(f"处理页面批次: {batch_start + 1}-{batch_end}")
+            self.logger.info(f"处理页面批次: {batch_start + 1}-{batch_end}")
             
             batch_content = self._process_page_batch(doc, batch_start, batch_end)
             markdown_parts.append(batch_content)
@@ -180,7 +183,7 @@ class PDFConverterV2(LogMixin):
             # 更新进度
             processed = min(batch_end - start_page + 1, self.processing_stats['total_pages'])
             progress = (processed / (end_page - start_page + 1)) * 100
-            self.log_info(f"处理进度: {progress:.1f}% ({processed}/{end_page - start_page + 1}页)")
+            self.logger.info(f"处理进度: {progress:.1f}% ({processed}/{end_page - start_page + 1}页)")
         
         return '\n'.join(markdown_parts)
     
@@ -201,11 +204,11 @@ class PDFConverterV2(LogMixin):
                 
                 # 定期更新进度
                 if self.processing_stats['processed_pages'] % self.config.progress_update_interval == 0:
-                    self.log_info(f"已处理 {self.processing_stats['processed_pages']} 页")
+                    self.logger.info(f"已处理 {self.processing_stats['processed_pages']} 页")
                     
             except Exception as e:
                 error_msg = f"处理第{page_num + 1}页时发生错误: {e}"
-                self.log_error(error_msg)
+                self.logger.error(error_msg)
                 self.processing_stats['errors'].append(error_msg)
                 
                 # 添加错误标记到输出
@@ -243,7 +246,7 @@ class PDFConverterV2(LogMixin):
             extracted_table = table.extract()
             return [[str(cell).strip() if cell else "" for cell in row] for row in extracted_table]
         except Exception as e:
-            self.log_warning(f"提取表格数据时发生错误: {e}")
+            self.logger.warning(f"提取表格数据时发生错误: {e}")
             return []
     
     def _is_valid_table(self, table_data: List[List[str]]) -> bool:
@@ -363,7 +366,7 @@ class PDFConverterV2(LogMixin):
             return '\n'.join(formatted_content)
             
         except Exception as e:
-            self.log_warning(f"使用PyMuPDF提取第{page_idx + 1}页文本时发生错误: {e}")
+            self.logger.warning(f"使用PyMuPDF提取第{page_idx + 1}页文本时发生错误: {e}")
             return f"<!-- 文本提取错误: {e} -->"
     
     def _find_table_overlap(self, block_bbox, table_positions) -> Tuple[int, float]:
@@ -396,7 +399,7 @@ class PDFConverterV2(LogMixin):
                         tables_dict[i] = f"**表格:**\n\n{markdown_table}\n"
                         
         except Exception as e:
-            self.log_warning(f"表格提取失败: {e}")
+            self.logger.warning(f"表格提取失败: {e}")
         
         return tables_dict
     
@@ -428,7 +431,7 @@ class PDFConverterV2(LogMixin):
                     table_positions.append((bbox, i))
                     
         except Exception as e:
-            self.log_warning(f"表格位置检测失败: {e}")
+            self.logger.warning(f"表格位置检测失败: {e}")
         
         # 按Y坐标排序表格
         table_positions.sort(key=lambda x: x[0][1])
@@ -451,7 +454,7 @@ class PDFConverterV2(LogMixin):
             for img_index, img_info in enumerate(image_list):
                 try:
                     image_markdown = f"\n**[第{page_idx + 1}页, 图片{img_index + 1}]**\n"
-                    self.log_info(f"\n图片 :{image_markdown}\n")
+                    self.logger.info(f"\n图片 :{image_markdown}\n")
                     ##OCR图片内容
                     pix = fitz.Pixmap(page.parent, img_info[0])
                     if pix.n < 5:
@@ -459,17 +462,17 @@ class PDFConverterV2(LogMixin):
                         pil_img = Image.open(io.BytesIO(img_data))
                         # pil_img.save(f"../files/imgs/temp_img_{page_idx+1}_{img_index+1}.png")
                         ocr_text = self.ocr_service.perform_ocr(pil_img)
-                        self.log_info(f"OCR 结果: \n{ocr_text}")
+                        self.logger.info(f"OCR 结果: \n{ocr_text}")
                         image_markdown += f"```OCR 内容 [第{page_idx + 1}页, 图片{img_index + 1}]: \n{ocr_text} \n```\n"
 
                     images_dict[img_index] = image_markdown
                 except Exception as img_error:
-                    self.log_warning(f"处理图片 {img_index} 时发生错误: {img_error}")
+                    self.logger.warning(f"处理图片 {img_index} 时发生错误: {img_error}")
                     images_dict[img_index] = f"``` 图片 {img_index} 处理失败: {img_error} \n```\n"
                     
             return images_dict
         except Exception as e:
-            self.log_warning(f"图片提取失败: {e}")
+            self.logger.warning(f"图片提取失败: {e}")
             return {}
 
     def _detect_image_positions(self, doc: fitz.Document, page_idx: int) -> List[Tuple[Tuple[float, float, float, float], int]]:
@@ -506,7 +509,7 @@ class PDFConverterV2(LogMixin):
                 image_positions.append((img_bbox, img_index))
                     
         except Exception as e:
-            self.log_warning(f"图片位置检测失败: {e}")
+            self.logger.warning(f"表格位置检测失败: {e}")
             return []
         
         image_positions.sort(key=lambda x: x[0][1])
@@ -628,7 +631,7 @@ class PDFConverterV2(LogMixin):
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(content)
             
-            self.log_info(f"结果已保存到: {output_path}")
+            self.logger.info(f"结果已保存到: {output_path}")
             
         except Exception as e:
             raise Exception(f"保存输出文件失败: {e}")
@@ -720,22 +723,23 @@ def main():
         )
         
         if result['success']:
-            print(f"✅ 转换成功!")
-            print(f"   输出文件: {result['output_path']}")
-            print(f"   处理页面: {result['pages_processed']}")
-            print(f"   发现表格: {result['tables_found']}")
-            print(f"   处理时间: {result['processing_time']:.2f}秒")
+            self.logger.info(f"✅ 转换成功!")
+            self.logger.info(f"   输出文件: {result['output_path']}")
+            self.logger.info(f"   处理页面: {result['pages_processed']}")
+            self.logger.info(f"   发现表格: {result['tables_found']}")
+            self.logger.info(f"   处理时间: {result['processing_time']:.2f}秒")
+            self.logger.info(f"   详细信息: {result.get('details', '无')}")
             sys.exit(0)
         else:
-            print(f"❌ 转换失败: {result.get('error', '未知错误')}")
+            self.logger.error(f"❌ 转换失败: {result.get('error', '未知错误')}")
             if result.get('errors'):
-                print("详细错误:")
+                self.logger.error("详细错误:")
                 for error in result['errors']:
-                    print(f"  - {error}")
+                    self.logger.error(f"  - {error}")
             sys.exit(1)
             
     except Exception as e:
-        print(f"❌ 程序执行错误: {e}")
+        self.logger.error(f"❌ 程序执行错误: {e}")
         sys.exit(1)
 
 

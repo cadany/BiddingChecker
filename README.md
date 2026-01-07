@@ -58,12 +58,13 @@ python backend/test/test_ocr_service.py
 ## 开发
 
 ### 接口
-   - `/api/bidding/file/upload`：上传文件，返回文件id。
-   - `/api/bidding/file/delete`：传入文件id，删除文件。
-   - `/api/bidding/file/convert2md`：传入文件id，将文件转换为Markdown格式。
-   - `/api/bidding/file/convert2md/stop`：传入任务id，停止文件转换任务。
-   - `/api/bidding/file/convert2md/progress`：传入任务id，返回文件转换任务进度。
-   - `/api/bidding/file/convert2md/result`：传入任务id，返回文件转换任务结果。
+   - `/api/file/upload`：上传文件，返回文件id。
+   - `/api/file/delete`：传入文件id，删除文件。
+   - `/api/file/list`：返回服务器上所有已上传文件的信息。
+   - `/api/file/convert2md`：传入文件id，将文件转换为Markdown格式。
+   - `/api/file/convert2md/stop`：传入任务id，停止文件转换任务。
+   - `/api/file/convert2md/progress`：传入任务id，返回文件转换任务进度。
+   - `/api/file/convert2md/result`：传入任务id，返回文件转换任务结果。
 
 ## 贡献代码
 

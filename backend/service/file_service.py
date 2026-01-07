@@ -6,6 +6,7 @@
 import os
 import uuid
 import json
+import logging
 from datetime import datetime
 from typing import Dict, Any, Optional
 import sys
@@ -13,27 +14,34 @@ import sys
 # 添加项目根目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.logger import LogMixin
+from config import get_config
 
-
-class FileService(LogMixin):
-    """文件上传服务类，使用纯LogMixin模式"""
+class FileService:
+    """文件上传服务类"""
     
-    def __init__(self, upload_dir: str = "uploads"):
+    def __init__(self, upload_dir: Optional[str] = None):
         """
         初始化文件上传服务
         
         Args:
-            upload_dir: 上传文件存储目录
+            upload_dir: 上传文件存储目录，如果为None则从配置中读取
         """
-        super().__init__()
-        self.upload_dir = upload_dir
-        self.file_records = {}  # 存储文件记录信息
+        self.logger = logging.getLogger(f"service.{self.__class__.__name__}")
+        # 使用uvicorn的日志配置，不添加自定义处理器
+        
+        # 获取配置
+        self.config = get_config()
+        
+        # 设置上传目录
+        if upload_dir is None:
+            self.upload_dir = self.config.get('storage.upload_dir', 'uploads')
+        else:
+            self.upload_dir = upload_dir
         
         # 确保上传目录存在
         os.makedirs(self.upload_dir, exist_ok=True)
         
-        self.log_info(f"FileService初始化完成，上传目录: {self.upload_dir}")
+        self.logger.info(f"FileService初始化完成，上传目录: {self.upload_dir}")
     
     def generate_file_id(self) -> str:
         """生成唯一的文件ID"""
@@ -65,7 +73,7 @@ class FileService(LogMixin):
             Dict: 包含状态码和file_id的JSON响应
         """
         try:
-            self.log_info(f"开始处理文件上传: {filename}")
+            self.logger.info(f"开始处理文件上传: {filename}")
             
             # 生成唯一文件ID
             file_id = self.generate_file_id()
@@ -81,21 +89,10 @@ class FileService(LogMixin):
             with open(file_path, 'wb') as f:
                 f.write(file_data)
             
-            # 记录文件信息
-            file_info = {
-                'file_id': file_id,
-                'original_filename': filename,
-                'storage_filename': storage_filename,
-                'file_path': file_path,
-                'file_size': len(file_data),
-                'file_type': file_type or self._detect_file_type(filename, file_extension),
-                'upload_time': datetime.now().isoformat(),
-                'status': 'uploaded'
-            }
+            # 检测文件类型
+            detected_file_type = file_type or self._detect_file_type(filename, file_extension)
             
-            self.file_records[file_id] = file_info
-            
-            self.log_info(f"文件上传成功 - ID: {file_id}, 文件名: {filename}, 大小: {len(file_data)} bytes")
+            self.logger.info(f"文件上传成功 - ID: {file_id}, 文件名: {filename}, 大小: {len(file_data)} bytes")
             
             # 返回JSON格式响应
             return {
@@ -105,12 +102,12 @@ class FileService(LogMixin):
                 'file_info': {
                     'original_filename': filename,
                     'file_size': len(file_data),
-                    'file_type': file_info['file_type']
+                    'file_type': detected_file_type
                 }
             }
             
         except Exception as e:
-            self.log_error(f"文件上传失败: {str(e)}")
+            self.logger.error(f"文件上传失败: {str(e)}")
             return {
                 'status_code': 500,
                 'file_id': None,
@@ -128,12 +125,32 @@ class FileService(LogMixin):
         Returns:
             Dict: 文件信息或None
         """
-        if file_id in self.file_records:
-            self.log_info(f"查询文件信息: {file_id}")
-            return self.file_records[file_id]
-        else:
-            self.log_warning(f"文件不存在: {file_id}")
-            return None
+        # 扫描上传目录，查找匹配的文件
+        for filename in os.listdir(self.upload_dir):
+            if filename.startswith(file_id):
+                file_path = os.path.join(self.upload_dir, filename)
+                if os.path.isfile(file_path):
+                    # 获取文件信息
+                    file_size = os.path.getsize(file_path)
+                    file_extension = os.path.splitext(filename)[1]
+                    
+                    # 从文件名推断原始文件名（这里简化处理）
+                    original_filename = f"{file_id}{file_extension}"
+                    
+                    self.logger.info(f"查询文件信息: {file_id}")
+                    return {
+                        'file_id': file_id,
+                        'original_filename': original_filename,
+                        'storage_filename': filename,
+                        'file_path': file_path,
+                        'file_size': file_size,
+                        'file_type': self._detect_file_type(filename, file_extension),
+                        'upload_time': datetime.fromtimestamp(os.path.getctime(file_path)).isoformat(),
+                        'status': 'uploaded'
+                    }
+        
+        self.logger.warning(f"文件不存在: {file_id}")
+        return None
     
     def delete_file(self, file_id: str) -> Dict[str, Any]:
         """
@@ -146,24 +163,29 @@ class FileService(LogMixin):
             Dict: 删除结果
         """
         try:
-            if file_id not in self.file_records:
-                self.log_error(f"删除失败，文件不存在: {file_id}")
+            # 查找要删除的文件
+            file_found = False
+            file_path = None
+            
+            for filename in os.listdir(self.upload_dir):
+                if filename.startswith(file_id):
+                    file_path = os.path.join(self.upload_dir, filename)
+                    if os.path.isfile(file_path):
+                        file_found = True
+                        break
+            
+            if not file_found or not file_path:
+                self.logger.error(f"删除失败，文件不存在: {file_id}")
                 return {
                     'status_code': 404,
                     'message': '文件不存在'
                 }
             
-            file_info = self.file_records[file_id]
-            file_path = file_info['file_path']
-            
             # 删除物理文件
             if os.path.exists(file_path):
                 os.remove(file_path)
             
-            # 删除记录
-            del self.file_records[file_id]
-            
-            self.log_info(f"文件删除成功: {file_id}")
+            self.logger.info(f"文件删除成功: {file_id}")
             
             return {
                 'status_code': 200,
@@ -172,7 +194,7 @@ class FileService(LogMixin):
             }
             
         except Exception as e:
-            self.log_error(f"文件删除失败: {str(e)}")
+            self.logger.error(f"文件删除失败: {str(e)}")
             return {
                 'status_code': 500,
                 'message': f'文件删除失败: {str(e)}',
@@ -186,17 +208,30 @@ class FileService(LogMixin):
         Returns:
             Dict: 文件列表信息
         """
-        self.log_info("获取文件列表")
+        self.logger.info("获取文件列表")
         
         files = []
-        for file_id, file_info in self.file_records.items():
-            files.append({
-                'file_id': file_id,
-                'original_filename': file_info['original_filename'],
-                'file_size': file_info['file_size'],
-                'file_type': file_info['file_type'],
-                'upload_time': file_info['upload_time']
-            })
+        
+        # 扫描上传目录中的所有文件
+        for filename in os.listdir(self.upload_dir):
+            file_path = os.path.join(self.upload_dir, filename)
+            if os.path.isfile(file_path):
+                # 从文件名提取file_id（假设文件名格式为file_id + 扩展名）
+                file_id = os.path.splitext(filename)[0]
+                file_extension = os.path.splitext(filename)[1]
+                
+                # 获取文件信息
+                file_size = os.path.getsize(file_path)
+                upload_time = datetime.fromtimestamp(os.path.getctime(file_path)).isoformat()
+                file_type = self._detect_file_type(filename, file_extension)
+                
+                files.append({
+                    'file_id': file_id,
+                    'original_filename': filename,
+                    'file_size': file_size,
+                    'file_type': file_type,
+                    'upload_time': upload_time
+                })
         
         return {
             'status_code': 200,

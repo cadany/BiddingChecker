@@ -10,18 +10,20 @@ from dotenv import load_dotenv
 # 添加当前目录到Python路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from routes.bid_routes import bid_router
-from routes.pdf_routes import pdf_router
-from routes.bidding_routes import bidding_router
+from routes.file_routes import file_router
+from config import get_config
 
 # 加载环境变量
 load_dotenv()
 
+# 初始化配置
+config = get_config()
+
 # FastAPI应用配置
 app = FastAPI(
-    title="BiddingChecker API",
+    title="FileConverter API",
     version="1.0.0",
-    description="竞价检查系统API",
+    description="文件转换API",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -29,7 +31,7 @@ app = FastAPI(
 # 添加CORS中间件
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 在生产环境中应限制为特定域名
+    allow_origins=config.get('security.cors_origins', ["*"]),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -109,15 +111,13 @@ async def general_exception_handler(request, exc):
     )
 
 # 注册路由
-app.include_router(bid_router, prefix="/api", tags=["bids"])
-app.include_router(pdf_router, prefix="/api", tags=["pdf"])
-app.include_router(bidding_router, prefix="/api", tags=["bidding"])
+app.include_router(file_router, prefix="/api", tags=["file"])
 
 @app.get("/", summary="API根路径", description="返回API基本信息")
 async def root():
     """API根路径"""
     return {
-        "message": "Welcome to BiddingChecker API",
+        "message": "Welcome to FileConverter API",
         "status": "running",
         "version": "1.0.0",
         "docs": "/docs"
@@ -133,7 +133,36 @@ async def health_check():
 
 if __name__ == '__main__':
     import uvicorn
-    port = int(os.environ.get('PORT', 18080))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    import logging
+    
+    # 配置根logger以捕获所有业务日志
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    
+    # 添加控制台处理器（如果还没有）
+    if not root_logger.handlers:
+        console_handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
+    
+    # 从配置中获取服务器设置
+    server_config = config.get_server_config()
+    host = server_config.get('host', '0.0.0.0')
+    port = server_config.get('port', 18080)
+    debug = server_config.get('debug', False)
+    reload = server_config.get('reload', False)
+    
+    print(f"启动服务器: {host}:{port}")
+    print(f"调试模式: {debug}")
+    print(f"热重载: {reload}")
+    
+    uvicorn.run(
+        app, 
+        host=host, 
+        port=port,
+        log_level="info",  # 使用uvicorn的默认日志配置
+        reload=reload
+    )
 
     

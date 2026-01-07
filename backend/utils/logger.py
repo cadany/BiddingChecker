@@ -145,4 +145,4 @@ def get_service_logger(service_name: str) -> logging.Logger:
 
 
 # 默认配置
-setup_logging()
+# setup_logging()  # 注释掉默认配置，由应用根据需要调用
