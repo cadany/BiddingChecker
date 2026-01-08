@@ -10,8 +10,10 @@ ENV PYTHONPATH=/app
 WORKDIR /app
 
 # Install system dependencies for PaddleOCR and PDF processing using Chinese mirror source
-RUN sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list \
-    && sed -i 's/security.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list \
+RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm main" > /etc/apt/sources.list \
+    && echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm-updates main" >> /etc/apt/sources.list \
+    && echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm-backports main" >> /etc/apt/sources.list \
+    && echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian-security bookworm-security main" >> /etc/apt/sources.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         pkg-config \
