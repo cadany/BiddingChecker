@@ -33,7 +33,8 @@ RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm main" > /etc/
         libxrender1 \
         vim \
     && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    && apt-get clean \
+    && mkdir -p /app/logs
 
 # Copy requirements file
 COPY backend/requirements.txt /app/requirements.txt
