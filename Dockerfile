@@ -21,6 +21,17 @@ RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm main" > /etc/
         libjpeg62-turbo \
         libpng16-16 \
         curl \
+        poppler-utils \
+        libgomp1 \
+        libjpeg62-turbo \
+        libpng16-16 \
+        curl \
+        libgl1 \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libxrender1 \
+        vim \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
@@ -45,4 +56,4 @@ EXPOSE 18080
 #    CMD curl -f http://localhost:18080/docs || exit 1
 
 # Run the application with uvicorn
-CMD ["uvicorn", "run:app", "--host", "0.0.0.0", "--port", "18080", "--reload"]
+CMD uvicorn run:app --host 0.0.0.0 --port 18080 --reload > /app/pdf2md.log 2>&1

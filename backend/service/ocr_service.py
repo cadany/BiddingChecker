@@ -2,11 +2,19 @@ import logging
 from typing import Optional
 from dataclasses import dataclass
 
+# 确保Image类始终可用
+try:
+    from PIL import Image
+except ImportError:
+    # 如果PIL不可用，创建一个占位符类
+    class Image:
+        class Image:
+            pass
+
 try:
     from paddleocr import PaddleOCR , benchmark
     import cv2
     import numpy as np
-    from PIL import Image
     OCR_AVAILABLE = True
 except ImportError:
     OCR_AVAILABLE = False
