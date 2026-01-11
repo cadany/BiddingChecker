@@ -44,6 +44,8 @@ RUN pip install --no-cache-dir --upgrade pip -i https://pypi.tuna.tsinghua.edu.c
 
 # Copy project
 COPY backend/ /app/
+# COPY PaddleOCR models
+COPY ppaddlex_models /root/.paddlex/
 
 # Create uploads directory for any temporary files
 RUN mkdir -p uploads
