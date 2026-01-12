@@ -1,9 +1,8 @@
-# BiddingChecker
+# pdf2md
 
 ## 项目介绍
 
 对PDF格式的应标文件进行分析，提取文件中的文字内容，并对文件中的图片进行OCR识别，最后将提取出的文字内容保存为Markdown格式的文件。
-根据检查项提示词，对提取出的文字内容进行检查，根据检查项提示词的要求，对检查结果进行评估，返回检查结果。
 
 ## 功能介绍
 
@@ -68,9 +67,11 @@ python backend/test/test_ocr_service.py
 
 ## 部署
 
-docker build -t bid_checker:v0.1 .
+```shell
+docker build -t pdf2md:v0.1 .
 
-docker run -d --name bid_check  -p 38111:18080 -v `pwd`/data:/app/uploads -v `pwd`/logs:/app/logs bid_checker:v0.1
+docker run -d --name pdf2md  -p 38111:18080 -v `pwd`/data:/app/uploads -v `pwd`/logs:/app/logs pdf2md:v0.1
+```
 
 ## 贡献代码
 
