@@ -479,7 +479,7 @@ class PDFConverterV2:
                     images_dict[img_index] = image_markdown
                 except Exception as img_error:
                     self.logger.warning(f"处理图片 {img_index} 时发生错误: {img_error}")
-                    images_dict[img_index] = f"``` 图片 {img_index} 处理失败: {img_error} \n```\n"
+                    images_dict[img_index] = f"``` OCR内容图片失败-{img_index}: {img_error} \n```\n"
                     
             return images_dict
         except Exception as e:
