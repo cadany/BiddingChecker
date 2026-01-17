@@ -131,17 +131,8 @@ async def health_check():
 if __name__ == '__main__':
     import uvicorn
     import logging
-    
-    # 配置根logger以捕获所有业务日志
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
-    
-    # 添加控制台处理器（如果还没有）
-    if not root_logger.handlers:
-        console_handler = logging.StreamHandler()
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        console_handler.setFormatter(formatter)
-        root_logger.addHandler(console_handler)
+
+    logger = logging.getLogger("uvicorn.server")  # 使用uvicorn的server logger
     
     # 从配置中获取服务器设置
     server_config = config.get_server_config()
@@ -150,9 +141,9 @@ if __name__ == '__main__':
     debug = server_config.get('debug', False)
     reload = server_config.get('reload', False)
     
-    print(f"启动服务器: {host}:{port}")
-    print(f"调试模式: {debug}")
-    print(f"热重载: {reload}")
+    logger.info(f"启动服务器: {host}:{port}")
+    logger.info(f"调试模式: {debug}")
+    logger.info(f"热重载: {reload}")
     
     uvicorn.run(
         app, 

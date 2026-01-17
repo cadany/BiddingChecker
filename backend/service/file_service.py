@@ -211,7 +211,6 @@ class FileService:
         self.logger.info("获取文件列表")
         
         files = []
-        self.logger.info(f"列出上传目录")
         # 扫描上传目录中的所有文件
         for filename in os.listdir(self.upload_dir):
             file_path = os.path.join(self.upload_dir, filename)
